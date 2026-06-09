@@ -1,6 +1,7 @@
 import React, { useState, FormEvent, useRef } from "react";
 import { Video } from "../types";
 import { Search, Filter, ExternalLink, Trash2, Edit3, Film, Hash, AlertTriangle, Eye, ThumbsUp, MessageSquare, Tag, Calendar, X, Save, Paperclip, Upload, Loader2 } from "lucide-react";
+import { supabaseService } from "../lib/supabase";
 
 interface VideoLibraryProps {
   videos: Video[];
@@ -69,20 +70,10 @@ export default function VideoLibrary({ videos, onVideoDeleted, onVideoUpdated }:
       return;
     }
     try {
-      const response = await fetch(`/api/videos/${id}`, {
-        method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem("ig_hub_token") || ""}`,
-        },
-      });
-      if (response.ok) {
-        onVideoDeleted(id);
-      } else {
-        const d = await response.json();
-        alert(d.error || "فشل حذف الفيديو من الخادم.");
-      }
-    } catch (err) {
-      alert("عذراً، حدث خطأ في الاتصال بالخادم لحذف الفيديو.");
+      await supabaseService.deleteVideo(id);
+      onVideoDeleted(id);
+    } catch (err: any) {
+      alert(err.message || "فشل حذف الفيديو من قاعدة البيانات.");
     }
   }
 
@@ -208,37 +199,27 @@ export default function VideoLibrary({ videos, onVideoDeleted, onVideoUpdated }:
         .map((t) => t.trim().replace(/#/g, ""))
         .filter((t) => t.length > 0);
 
-      const response = await fetch(`/api/videos/${editingVideo.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("ig_hub_token") || ""}`,
+      const updated = await supabaseService.updateVideo({
+        id: editingVideo.id,
+        title: editTitle,
+        description: editDescription,
+        instagramUrl: editUrl,
+        tags: parsedTags,
+        status: editStatus,
+        publishDate: editPublishDate,
+        duration: editDuration,
+        notes: editNotes,
+        stats: {
+          views: Number(editViews) || 0,
+          likes: Number(editLikes) || 0,
+          comments: Number(editComments) || 0,
         },
-        body: JSON.stringify({
-          title: editTitle,
-          description: editDescription,
-          instagramUrl: editUrl,
-          tags: parsedTags,
-          status: editStatus,
-          publishDate: editPublishDate,
-          duration: editDuration,
-          notes: editNotes,
-          stats: {
-            views: Number(editViews) || 0,
-            likes: Number(editLikes) || 0,
-            comments: Number(editComments) || 0,
-          },
-          attachedVideoUrl: editAttachedVideoUrl || null,
-          attachedVideoName: editAttachedVideoName || null,
-        }),
+        attachedVideoUrl: editAttachedVideoUrl || undefined,
+        attachedVideoName: editAttachedVideoName || undefined,
+        createdAt: editingVideo.createdAt
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "خطأ غير متوقع أثناء تحديث بيانات الفيديو");
-      }
-
-      onVideoUpdated(data.video);
+      onVideoUpdated(updated);
       setEditingVideo(null); // Close modal
     } catch (err: any) {
       setEditError(err.message || "فشل تحديث البيانات.");

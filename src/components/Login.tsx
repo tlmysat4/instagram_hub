@@ -1,40 +1,21 @@
-import { useState, useEffect, FormEvent } from "react";
-import { Lock, User, Eye, EyeOff, Film, AlertCircle, Clipboard, ClipboardCopy, Check } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Film, AlertTriangle, ShieldCheck, ArrowLeftRight } from "lucide-react";
+import { supabaseService, isRealSupabaseConfigured } from "../lib/supabase";
 
 interface LoginProps {
   onLoginSuccess: (token: string, username: string) => void;
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [copiedUsername, setCopiedUsername] = useState(false);
-  const [copiedPassword, setCopiedPassword] = useState(false);
-  const [showDefaults, setShowDefaults] = useState(true);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
   useEffect(() => {
-    async function checkDefaults() {
-      try {
-        const response = await fetch("/api/auth/show-defaults");
-        if (response.ok) {
-          const data = await response.json();
-          setShowDefaults(data.showDefaults);
-        }
-      } catch (err) {
-        console.error("Error checking credentials status:", err);
-      }
-    }
-    checkDefaults();
-  }, []);
-
-  useEffect(() => {
+    // Intercept callback messages from Google Oauth popup (simulated or real)
     const handleMessage = (event: MessageEvent) => {
+      // Validate secure origins dynamically to avoid outer intercept
       const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost') && !origin.includes('supabase.co')) {
         return;
       }
       
@@ -51,274 +32,121 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   }, [onLoginSuccess]);
 
   async function handleGoogleLogin() {
-    setGoogleLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/auth/google/url");
-      if (!response.ok) {
-        throw new Error("فشل تحضير رابط تسجيل جوجل");
-      }
-      const data = await response.json();
-      
-      const width = 500;
-      const height = 650;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-      
-      const authWindow = window.open(
-        data.url,
-        "google_oauth",
-        `width=${width},height=${height},top=${top},left=${left}`
-      );
-      
-      if (!authWindow) {
-        setError("يبدو أن المتصفح حظر النافذة المنبثقة. يرجى إلغاء الحظر والمحاولة مجدداً.");
-      }
-    } catch (err: any) {
-      setError(err.message || "حدث خطأ غير متوقع أثناء الاتصال بجوجل");
-    } finally {
-      setGoogleLoading(false);
-    }
-  }
-
-  async function handleCopyAndFill(value: string, targetField: "username" | "password") {
-    try {
-      await navigator.clipboard.writeText(value);
-      if (targetField === "username") {
-        setUsername(value);
-        setCopiedUsername(true);
-        setTimeout(() => setCopiedUsername(false), 2000);
-      } else {
-        setPassword(value);
-        setCopiedPassword(true);
-        setTimeout(() => setCopiedPassword(false), 2000);
-      }
-    } catch (err) {
-      if (targetField === "username") {
-        setUsername(value);
-      } else {
-        setPassword(value);
-      }
-    }
-  }
-
-  async function handlePasteToField(targetField: "username" | "password") {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) {
-        if (targetField === "username") {
-          setUsername(text);
-        } else {
-          setPassword(text);
-        }
-      }
-    } catch (err) {
-      setError("عذراً، تمنع بعض المتصفحات الوصول التلقائي للمحافظ في هذا الوضع. اضغط Ctrl+V للصق المباشر.");
-      setTimeout(() => setError(""), 4000);
-    }
-  }
-
-  async function handleLogin(e: FormEvent) {
-    e.preventDefault();
-    if (!username.trim() || !password.trim()) {
-      setError("يرجى ملء جميع الحقول المطلوبة.");
-      return;
-    }
-
-    setError("");
     setLoading(true);
-
+    setError("");
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "خطأ غير متوقع أثناء تسجيل الدخول");
+      const result = await supabaseService.signInWithGoogle();
+      
+      if (result.error) {
+        throw new Error(result.error);
       }
-
-      onLoginSuccess(data.token, data.username);
+      
+      if (result.url) {
+        // If we have a URL, spawn a secure auth popup window
+        const width = 520;
+        const height = 650;
+        const left = window.screen.width / 2 - width / 2;
+        const top = window.screen.height / 2 - height / 2;
+        
+        const authWindow = window.open(
+          result.url,
+          "google_oauth",
+          `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`
+        );
+        
+        if (!authWindow) {
+          setError("يبدو أن المتصفح حظر فتح النافذة المنبثقة التلقائية. يرجى السماح بالنوافذ المنبثقة من شريط العنوان ثم المحاولة مجدداً.");
+        }
+      } else {
+        throw new Error("لم يتم إرجاع مسار توثيق صالح");
+      }
     } catch (err: any) {
-      setError(err.message || "فشل الاتصال بالخادم. يرجى المحاولة لاحقاً.");
+      setError(err.message || "حدث خطأ غير متوقع أثناء محاولة الاتصال بخدمات Google Auth");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#050505] relative px-4 py-12 overflow-hidden" id="login-container">
-      {/* Background Glow Decor */}
-      <div className="absolute top-[-20%] left-[-20%] w-[600px] h-[600px] bg-[#3a1550] rounded-full blur-[140px] opacity-20 pointer-events-none"></div>
+    <div className="min-h-screen bg-[#050505] flex items-center justify-center p-4 relative overflow-hidden font-sans select-none" dir="rtl">
+      
+      {/* Absolute Glow Background Backdrops (Instagram Brand Gradient Theme) */}
+      <div className="absolute top-[-25%] left-[-25%] w-[80vw] h-[80vw] bg-radial from-[#833ab4]/15 via-[#fd1d1d]/5 to-transparent rounded-full blur-[140px] pointer-events-none"></div>
+      <div className="absolute bottom-[-25%] right-[-25%] w-[80vw] h-[80vw] bg-radial from-[#fcb045]/10 via-[#fd1d1d]/5 to-transparent rounded-full blur-[140px] pointer-events-none"></div>
 
-      <div className="w-full max-w-md bg-[#0d0d0d] border border-[#1a1a1a] rounded-[40px] p-8 shadow-2xl relative z-10 transition-all duration-300" id="login-card">
-        {/* Logo and Greeting */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-tr from-[#833ab4] via-[#fd1d1d] to-[#fcb045] rounded-2xl mb-4 flex items-center justify-center shadow-[0_0_20px_rgba(253,29,29,0.3)] text-white mx-auto">
-            <Film className="w-8 h-8" />
+      <div className="w-full max-w-md bg-[#0b0b0e] border border-[#1a1a24] rounded-[36px] p-8 md:p-10 shadow-[0_30px_100px_rgba(0,0,0,0.8)] relative z-10 space-y-8 animate-fade-in">
+        
+        {/* Branding Emblem Layout */}
+        <div className="text-center space-y-4">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-[28px] bg-gradient-to-tr from-[#833ab4] via-[#fd1d1d] to-[#fcb045] shadow-[0_10px_35px_rgba(253,29,29,0.35)] mb-3 animate-pulse">
+            <Film className="w-10 h-10 text-white stroke-[1.5]" />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">مركز المحتوى</h1>
-          <p className="text-sm text-gray-400 mt-2 font-light">منصة خاصة لإدارة محتوى الفيديو ومنع النشر المتكرر</p>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-black text-white tracking-tight">منصة مركز المحتوى</h1>
+            <p className="text-xs text-[#9d9da8] font-light">إدارة وتدقيق الفيديوهات الرقمية لإنستغرام (IG Hub)</p>
+          </div>
         </div>
 
-        {/* Security Notice */}
-        <div className="flex items-center gap-3 bg-red-500/5 border border-red-500/10 rounded-2xl px-4 py-3 mb-6 text-gray-400 text-xs text-right leading-relaxed">
-          <AlertCircle className="w-5 h-5 shrink-0 text-red-400" />
-          <span>هذا الموقع خاص جداً. يتطلب تسجيل الدخول المعتمد لتتمكن من الوصول للفيديوهات والبيانات.</span>
+        {/* Informative Security Banner */}
+        <div className="bg-[#121217] border border-[#ff4141]/20 rounded-2xl p-4 space-y-2">
+          <div className="flex items-center gap-2 text-red-400">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <h3 className="text-xs font-bold font-sans">بوابة نظام مغلقة وآمنة 100%</h3>
+          </div>
+          <p className="text-[11px] text-[#8e8e9c] leading-relaxed font-light">
+            هذه المنصة مخصصة وحصرية. لا يمكن استعراض أو الوصول إلى أي فيديو، إحصائية، أو إعداد دون تصريح رسمي وتسجيل الدخول بحساب Google معتمد لدى الإدارة.
+          </p>
         </div>
 
-        {/* Error Notification */}
+        {/* Error Notification Block */}
         {error && (
-          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 mb-6 text-red-300 text-xs animate-shake">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <span className="font-medium text-right">{error}</span>
+          <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-xs flex items-start gap-2 text-right">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="leading-relaxed font-medium">{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-5">
-          {/* Username Field */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-2 mr-1">اسم المستخدم</label>
-            <div className="relative">
-              <span className="absolute inset-y-0 right-0 p-3 flex items-center text-gray-500 pointer-events-none">
-                <User className="w-4 h-4" />
-              </span>
-              <input
-                id="login-username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="أدخل اسم المستخدم"
-                className="w-full bg-[#121212] border border-[#222] focus:border-[#fd1d1d] rounded-xl py-3 pr-10 pl-11 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#fd1d1d] transition-colors"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => handlePasteToField("username")}
-                className="absolute inset-y-0 left-0 p-3 flex items-center text-gray-550 hover:text-white transition-colors cursor-pointer group"
-                title="لصق اسم المستخدم من الحافظة"
-              >
-                <Clipboard className="w-4 h-4 group-hover:scale-105 transition-transform text-gray-400 hover:text-[#fd1d1d]" />
-              </button>
-            </div>
-          </div>
-
-          {/* Password Field */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-2 mr-1">كلمة المرور</label>
-            <div className="relative">
-              <span className="absolute inset-y-0 right-0 p-3 flex items-center text-gray-500 pointer-events-none">
-                <Lock className="w-4 h-4" />
-              </span>
-              <input
-                id="login-password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-[#121212] border border-[#222] focus:border-[#fd1d1d] rounded-xl py-3 pr-10 pl-20 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-[#fd1d1d] transition-colors"
-                required
-              />
-              <div className="absolute inset-y-0 left-0 flex items-center pl-1">
-                <button
-                  type="button"
-                  onClick={() => handlePasteToField("password")}
-                  className="p-3 flex items-center text-gray-400 hover:text-[#fd1d1d] transition-colors cursor-pointer group"
-                  title="لصق كلمة المرور من الحافظة"
-                >
-                  <Clipboard className="w-4 h-4 group-hover:scale-105 transition-transform" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="p-3 flex items-center text-gray-400 hover:text-white transition-colors cursor-pointer"
-                  title={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Settings Credentials Guidelines */}
-          {showDefaults && (
-            <div className="bg-[#121212]/50 border border-[#222] rounded-3xl p-4 text-xs space-y-3">
-              <p className="text-gray-400 text-center leading-relaxed font-light text-[11px]">
-                بيانات الدخول الافتراضية سريعة النسخ والتعبئة التلقائية:
-              </p>
-              <div className="flex flex-col sm:flex-row gap-2 justify-center items-center">
-                <button
-                  type="button"
-                  onClick={() => handleCopyAndFill("admin", "username")}
-                  className="flex items-center gap-1.5 bg-[#050505] hover:bg-white/5 text-gray-300 hover:text-white px-3 py-1.5 rounded-xl border border-[#222] hover:border-red-500/20 transition-all text-[11px] cursor-pointer w-full sm:w-auto justify-center"
-                >
-                  {copiedUsername ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-green-400" />
-                      <span className="text-green-400 font-bold">تم نسخ اسم المستخدم!</span>
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardCopy className="w-3.5 h-3.5 text-red-500" />
-                      <span>اسم المستخدم: </span>
-                      <strong className="font-mono text-white">admin</strong>
-                    </>
-                  )}
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => handleCopyAndFill("instagram_hub_2026", "password")}
-                  className="flex items-center gap-1.5 bg-[#050505] hover:bg-white/5 text-gray-300 hover:text-white px-3 py-1.5 rounded-xl border border-[#222] hover:border-red-500/20 transition-all text-[11px] cursor-pointer w-full sm:w-auto justify-center"
-                >
-                  {copiedPassword ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-green-400" />
-                      <span className="text-green-400 font-bold">تم نسخ كلمة المرور!</span>
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardCopy className="w-3.5 h-3.5 text-red-500" />
-                      <span>كلمة المرور: </span>
-                      <strong className="font-mono text-white">instagram_hub_2026</strong>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Submit Button */}
+        {/* Google SSO Login Button Interface */}
+        <div className="space-y-4 pt-2">
           <button
-            id="login-submit"
-            type="submit"
-            disabled={loading}
-            className="w-full bg-white hover:bg-gray-200 disabled:bg-gray-600 text-black font-extrabold rounded-full py-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-white/20 cursor-pointer shadow-lg"
-          >
-            {loading ? "جاري التحقق..." : "تسجيل الدخول الآمن"}
-          </button>
-
-          {/* Separator */}
-          <div className="flex items-center my-4">
-            <div className="flex-grow border-t border-[#1a1a1a]"></div>
-            <span className="px-3 text-xs text-gray-500 font-light">أو عبر الخدمات الأمنية</span>
-            <div className="flex-grow border-t border-[#1a1a1a]"></div>
-          </div>
-
-          {/* Google SSO Login Button */}
-          <button
-            id="login-google-sso"
+            id="google-sso-login-btn"
             type="button"
             onClick={handleGoogleLogin}
-            disabled={googleLoading}
-            className="w-full bg-transparent hover:bg-white/5 disabled:bg-transparent border border-[#222] hover:border-blue-500/30 text-white font-bold rounded-full py-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-550/20 cursor-pointer flex items-center justify-center gap-2"
+            disabled={loading}
+            className="w-full bg-white text-black hover:bg-gray-100 disabled:bg-gray-400 disabled:text-gray-700 font-extrabold rounded-full py-4 px-6 text-sm transition-all focus:outline-none focus:ring-4 focus:ring-white/20 flex items-center justify-center gap-3 cursor-pointer shadow-lg hover:shadow-white/5 active:scale-[0.99]"
           >
-            <span className="text-blue-500 font-extrabold text-base">G</span>
-            <span>{googleLoading ? "جاري التحضير للربط..." : "تسجيل الدخول باستخدام Google"}</span>
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
+                <span>جاري الربط والتحقق...</span>
+              </>
+            ) : (
+              <>
+                {/* Visual SVG Google representation logos */}
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                </svg>
+                <span>تسجيل الدخول الآمن بـ Google</span>
+              </>
+            )}
           </button>
-        </form>
+        </div>
+
+        {/* Integration Credentials Footer Metadata Info */}
+        <div className="pt-4 border-t border-white/[0.04] flex items-center justify-between text-[10px] text-gray-500 font-sans" id="provider-badge">
+          <div className="flex items-center gap-1">
+            <ShieldCheck className="w-3.5 h-3.5 text-green-500" />
+            <span>نظام الحماية: {isRealSupabaseConfigured ? "Supabase Cloud" : "Sandbox Mode"}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <ArrowLeftRight className="w-3 h-3" />
+            <span>بروتوكول OIDC OAuth 2.0</span>
+          </div>
+        </div>
+
       </div>
     </div>
   );

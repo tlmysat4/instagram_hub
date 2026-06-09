@@ -1,6 +1,7 @@
 import React, { useState, FormEvent, DragEvent, useRef } from "react";
 import { Film, Link, Tag, Calendar, Clock, Sparkles, FileText, CheckCircle2, AlertTriangle, Plus, ChevronLeft, Upload, FileVideo, Trash2, Loader2, Paperclip } from "lucide-react";
 import { Video } from "../types";
+import { supabaseService } from "../lib/supabase";
 
 interface UploadVideoProps {
   onVideoAdded: (video: Video) => void;
@@ -201,27 +202,30 @@ export default function UploadVideo({ onVideoAdded, onNavigate }: UploadVideoPro
         attachedVideoName: attachedVideoName || undefined,
       };
 
-      const response = await fetch("/api/videos", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("ig_hub_token") || ""}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "حدث خطأ أثناء حفظ الفيديو.");
+      // Check duplicates first to warn details
+      let titleWarning = "";
+      try {
+        const check = await supabaseService.checkDuplicates({
+          title: payload.title,
+          description: payload.description,
+          instagramUrl: payload.instagramUrl,
+          videoName: payload.attachedVideoName
+        });
+        if (check && !check.safe) {
+          titleWarning = check.message || "تنبيه: تم رصد محتوى مشابه جداً قد يعتبره إنستغرام مكرراً!";
+        }
+      } catch (e) {
+        // fail silently for validation check to keep user flow error-free
       }
+
+      const savedVideo = await supabaseService.insertVideo(payload);
 
       // Success
       setSuccess(true);
-      if (data.titleWarning) {
-        setSuccessWarning(data.titleWarning);
+      if (titleWarning) {
+        setSuccessWarning(titleWarning);
       }
-      onVideoAdded(data.video);
+      onVideoAdded(savedVideo);
 
       // Clear state
       setTitle("");

@@ -8,6 +8,7 @@ import UploadVideo from "./components/UploadVideo";
 import PrePublishCheck from "./components/PrePublishCheck";
 import Settings from "./components/Settings";
 import AutoPublish from "./components/AutoPublish";
+import { supabaseService } from "./lib/supabase";
 
 export default function App() {
   const [user, setUser] = useState<{ authenticated: boolean; username: string | null }>({
@@ -25,31 +26,17 @@ export default function App() {
   // Check custom session status on mount
   useEffect(() => {
     async function checkSession() {
-      const token = localStorage.getItem("ig_hub_token");
-      if (!token) {
-        setUser({ authenticated: false, username: null });
-        setLoadingSession(false);
-        return;
-      }
-
       try {
-        const response = await fetch("/api/auth/me", {
-          headers: {
-            "Authorization": `Bearer ${token}`,
-          },
-        });
-        const data = await response.json();
-        
-        if (data.authenticated) {
-          setUser({ authenticated: true, username: data.username });
-          fetchVideos(token);
+        const session = await supabaseService.getCurrentUser();
+        if (session.authenticated && session.email) {
+          setUser({ authenticated: true, username: session.email });
+          await fetchVideos();
         } else {
-          localStorage.removeItem("ig_hub_token");
-          localStorage.removeItem("ig_hub_username");
           setUser({ authenticated: false, username: null });
         }
       } catch (err) {
         console.error("Critical error in session lookup:", err);
+        setUser({ authenticated: false, username: null });
       } finally {
         setLoadingSession(false);
       }
@@ -59,18 +46,11 @@ export default function App() {
   }, []);
 
   // Fetch all registered video records from database files
-  async function fetchVideos(token: string) {
+  async function fetchVideos() {
     setLoadingVideos(true);
     try {
-      const response = await fetch("/api/videos", {
-        headers: {
-          "Authorization": `Bearer ${token}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setVideos(data);
-      }
+      const data = await supabaseService.getVideos();
+      setVideos(data);
     } catch (err) {
       console.error("Failed to load videos from server:", err);
     } finally {
@@ -83,25 +63,17 @@ export default function App() {
     localStorage.setItem("ig_hub_token", token);
     localStorage.setItem("ig_hub_username", username);
     setUser({ authenticated: true, username });
-    fetchVideos(token);
+    fetchVideos();
   }
 
   // Handle logout
   async function handleLogout() {
-    const token = localStorage.getItem("ig_hub_token");
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token || ""}`,
-        },
-      });
+      await supabaseService.signOut();
     } catch (err) {
       // ignore network errors on logout
     }
 
-    localStorage.removeItem("ig_hub_token");
-    localStorage.removeItem("ig_hub_username");
     setUser({ authenticated: false, username: null });
     setVideos([]);
     setActiveTab("dashboard");
@@ -110,6 +82,11 @@ export default function App() {
   // State-updater callbacks
   function handleVideoAdded(newVideo: Video) {
     setVideos((prev) => [...prev, newVideo]);
+  }
+
+  // Refetch videos when a trigger changes
+  async function handleRefetchTrigger() {
+    await fetchVideos();
   }
 
   function handleVideoDeleted(id: string) {
